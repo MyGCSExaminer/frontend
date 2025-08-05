@@ -17,7 +17,7 @@
   <textarea id="msg" rows="3" placeholder="Type your message…"></textarea><br>
   <button id="send">Send</button>
   <script>
-   const API = "https://backend-code-80kr.onrender.com/chat";
+ const API = "https://backend-code-80kr.onrender.com/chat";
     let session = localStorage.getItem("session_id") || null;
     document.getElementById("send").onclick = async () => {
       let msg = document.getElementById("msg").value.trim();
