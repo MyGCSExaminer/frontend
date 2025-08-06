@@ -1,34 +1,80 @@
-<script>
-const API = "https://backend-code-80kr.onrender.com/chat";
-
-// Always ensure we have a persistent session_id
-let session = localStorage.getItem("session_id");
-if (!session) {
-  session = self.crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
-  localStorage.setItem("session_id", session);
-}
-
-document.getElementById("send").onclick = async () => {
-  let msg = document.getElementById("msg").value.trim();
-  if (!msg) return;
-  document.getElementById("chat").innerHTML += `<p class="user"><strong>You:</strong> ${msg}</p>`;
-  document.getElementById("msg").value = "";
-  try {
-    let res = await fetch(API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: msg, session_id: session })
-    });
-    if (!res.ok) throw new Error((await res.json()).detail || "Unknown error");
-    let data = await res.json();
-    // Only update session if backend gives a new one (usually not needed, but safe)
-    if (data.session_id && data.session_id !== session) {
-      session = data.session_id;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Assistant with File Upload</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    #chat { max-width: 600px; margin-bottom: 10px; }
+    .user { color: blue; }
+    .ai { color: green; }
+    textarea { width: 100%; }
+  </style>
+</head>
+<body>
+  <h2>Chat with Assistant (with File Upload)</h2>
+  <div id="chat"></div>
+  <textarea id="msg" rows="3" placeholder="Type your message..."></textarea><br>
+  <button id="send">Send</button>
+  <hr>
+  <input type="file" id="fileInput" />
+  <button id="uploadBtn">Upload File</button>
+  <div id="fileStatus"></div>
+  <script>
+    const API = "https://backend-code-80kr.onrender.com/chat";
+    // Robust persistent session_id
+    let session = localStorage.getItem("session_id");
+    if (!session) {
+      session = self.crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
       localStorage.setItem("session_id", session);
     }
-    document.getElementById("chat").innerHTML += `<p class="ai"><strong>AI:</strong> ${data.response}</p>`;
-  } catch (e) {
-    alert("Error: " + (e.detail || e.message));
-  }
-};
-</script>
+
+    // Chat send
+    document.getElementById("send").onclick = async () => {
+      let msg = document.getElementById("msg").value.trim();
+      if (!msg) return;
+      document.getElementById("chat").innerHTML += `<p class="user"><strong>You:</strong> ${msg}</p>`;
+      document.getElementById("msg").value = "";
+      try {
+        let res = await fetch(API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg, session_id: session })
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || "Unknown error");
+        let data = await res.json();
+        if (data.session_id && data.session_id !== session) {
+          session = data.session_id;
+          localStorage.setItem("session_id", session);
+        }
+        document.getElementById("chat").innerHTML += `<p class="ai"><strong>AI:</strong> ${data.response}</p>`;
+      } catch (e) {
+        alert("Error: " + (e.detail || e.message));
+      }
+    };
+
+    // File upload
+    document.getElementById('uploadBtn').onclick = async () => {
+      const fileInput = document.getElementById('fileInput');
+      if (!fileInput.files.length) return alert("No file selected!");
+      const file = fileInput.files[0];
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("session_id", session);
+
+      document.getElementById("fileStatus").innerText = "Uploading...";
+
+      let res = await fetch(API + "/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (res.ok) {
+        document.getElementById("fileStatus").innerText = "File uploaded and attached to session!";
+      } else {
+        document.getElementById("fileStatus").innerText = "Upload failed.";
+      }
+    };
+  </script>
+</body>
+</html>
