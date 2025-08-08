@@ -7,7 +7,7 @@
     body { font-family: sans-serif; padding: 20px; }
     #chat { max-width: 600px; margin-bottom: 10px; }
     .user { color: blue; }
-    .ai { color: green; white-space: pre-wrap; }
+    .ai { color: green; }
     textarea { width: 100%; }
   </style>
 </head>
@@ -15,7 +15,9 @@
   <h2>Chat with Assistant</h2>
   <div id="chat"></div>
   <textarea id="msg" rows="3" placeholder="Type your message…"></textarea><br>
+  <input type="file" id="fileUpload">
   <button id="send">Send</button>
+  <button id="uploadBtn">Upload File</button>
 
   <script>
     const API = "https://backend-code-80kr.onrender.com"; // Your backend URL
@@ -26,36 +28,35 @@
       if (!msg) return;
       document.getElementById("chat").innerHTML += `<p class="user"><strong>You:</strong> ${msg}</p>`;
       document.getElementById("msg").value = "";
-
-      const aiMsg = document.createElement("p");
-      aiMsg.className = "ai";
-      aiMsg.innerHTML = "<strong>AI:</strong> ";
-      document.getElementById("chat").appendChild(aiMsg);
-
-      const res = await fetch(API + "/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg, session_id: session })
-      });
-
-      if (!res.ok) {
-        aiMsg.innerHTML += "Error fetching response.";
-        return;
+      try {
+        let res = await fetch(API + "/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg, session_id: session })
+        });
+        let data = await res.json();
+        session = data.session_id;
+        localStorage.setItem("session_id", session);
+        document.getElementById("chat").innerHTML += `<p class="ai"><strong>AI:</strong> ${data.response}</p>`;
+      } catch (e) {
+        alert("Error: " + (e.detail || e.message));
       }
+    };
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        if (chunk.includes("data:")) {
-          let text = chunk.split("data:").slice(1).join("").trim();
-          if (text !== "done") {
-            aiMsg.innerHTML += text;
-          }
-        }
+    document.getElementById("uploadBtn").onclick = async () => {
+      const file = document.getElementById("fileUpload").files[0];
+      if (!file) return alert("No file selected!");
+      const formData = new FormData();
+      formData.append("file", file);
+      try {
+        let res = await fetch(API + "/upload", {
+          method: "POST",
+          body: formData
+        });
+        let data = await res.json();
+        alert("File uploaded: " + data.filename);
+      } catch (e) {
+        alert("Upload failed: " + e.message);
       }
     };
   </script>
