@@ -5,70 +5,105 @@
   <title>AI Assistant</title>
   <style>
     body { font-family: sans-serif; padding: 20px; }
-    #chat { max-width: 600px; margin-bottom: 10px; }
-    .user { color: blue; }
-    .ai { color: green; }
-    textarea, input[type=file] { width: 100%; margin-top: 5px; }
-    button { margin-top: 5px; }
+    #chat { max-width: 700px; margin: 0 auto 10px; }
+    .user { color: #2366d1; }
+    .ai { color: #2f9e44; white-space: pre-wrap; }
+    .bubble { padding: 8px 10px; border-radius: 8px; margin: 6px 0; background: #f6f8fb; }
+    .bubble.ai { background: #eef8f0; }
+    .thumb { max-width: 180px; max-height: 180px; display:block; margin:6px 0; border:1px solid #ddd; border-radius:6px; }
+    textarea, input[type=file] { width: 100%; margin-top: 8px; }
+    button { margin-top: 8px; }
+    .muted { color:#666; font-size: 0.9em; }
   </style>
 </head>
 <body>
   <h2>Chat with Assistant</h2>
   <div id="chat"></div>
-  
-  <textarea id="msg" rows="3" placeholder="Type your message..."></textarea><br>
-  <input type="file" id="fileInput"><br>
+
+  <textarea id="msg" rows="3" placeholder="Type your message…"></textarea>
+  <input type="file" id="fileInput" />
+  <div id="preview" class="muted"></div>
   <button id="send">Send</button>
 
   <script>
     const API = "https://backend-code-80kr.onrender.com/chat";
     let session = localStorage.getItem("session_id") || null;
 
+    const chat = document.getElementById("chat");
+    const msgEl = document.getElementById("msg");
+    const fileEl = document.getElementById("fileInput");
+    const preview = document.getElementById("preview");
+
+    // --- live preview of selected file ---
+    fileEl.onchange = async () => {
+      preview.innerHTML = "";
+      const f = fileEl.files[0];
+      if (!f) return;
+      // Image preview
+      if (f.type.startsWith("image/")) {
+        const url = URL.createObjectURL(f);
+        const img = document.createElement("img");
+        img.src = url;
+        img.className = "thumb";
+        preview.appendChild(img);
+      }
+      // Text preview (first ~300 chars)
+      else if (f.type.startsWith("text/")) {
+        const text = await f.text();
+        const snippet = document.createElement("div");
+        snippet.textContent = text.slice(0, 300) + (text.length > 300 ? "…" : "");
+        preview.appendChild(snippet);
+      } else {
+        preview.textContent = `Selected: ${f.name} (${f.type || "unknown type"})`;
+      }
+    };
+
     document.getElementById("send").onclick = async () => {
-      const msg = document.getElementById("msg").value.trim();
-      const fileInput = document.getElementById("fileInput");
-      const file = fileInput.files[0];
+      const text = msgEl.value.trim();
+      const file = fileEl.files[0];
+      if (!text && !file) { alert("Type a message or choose a file."); return; }
 
-      if (!msg && !file) {
-        alert("Please enter a message or select a file.");
-        return;
+      // show user bubble + any preview text
+      const you = document.createElement("div");
+      you.className = "bubble user";
+      you.innerHTML = `<strong>You:</strong> ${text || (file ? "[File sent]" : "")}`;
+      chat.appendChild(you);
+
+      if (file && preview.innerHTML) {
+        const p = document.createElement("div");
+        p.className = "muted";
+        p.innerHTML = preview.innerHTML; // copy preview content
+        chat.appendChild(p);
       }
 
-      let chatBox = document.getElementById("chat");
-      chatBox.innerHTML += `<p class="user"><strong>You:</strong> ${msg || "[File Upload]"}</p>`;
-      if (file) {
-        chatBox.innerHTML += `<p class="user"><em>📎 Attached: ${file.name}</em></p>`;
-      }
-      document.getElementById("msg").value = "";
-      fileInput.value = "";
+      // reset inputs
+      msgEl.value = "";
+      fileEl.value = "";
+      preview.innerHTML = "";
+
+      // build multipart form
+      const fd = new FormData();
+      fd.append("message", text);
+      if (session) fd.append("session_id", session);
+      if (file) fd.append("file", file);
+
+      // placeholder AI bubble
+      const ai = document.createElement("div");
+      ai.className = "bubble ai";
+      ai.innerHTML = "<strong>AI:</strong> typing…";
+      chat.appendChild(ai);
+      chat.scrollTop = chat.scrollHeight;
 
       try {
-        let formData = new FormData();
-        formData.append("message", msg);
-        formData.append("session_id", session || "");
-        if (file) {
-          formData.append("file", file);
-        }
-
-        let res = await fetch(API, {
-          method: "POST",
-          body: formData
-        });
-
-        if (!res.ok) {
-          let error = await res.json();
-          throw new Error(error.detail || "Unknown error");
-        }
-
-        let data = await res.json();
-        session = data.session_id;
-        localStorage.setItem("session_id", session);
-
-        chatBox.innerHTML += `<p class="ai"><strong>AI:</strong> ${data.response}</p>`;
-        chatBox.scrollTop = chatBox.scrollHeight;
-      } catch (e) {
-        alert("Error: " + e.message);
+        const res = await fetch(API, { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Request failed");
+        session = data.session_id; localStorage.setItem("session_id", session);
+        ai.innerHTML = `<strong>AI:</strong> ${data.response}`;
+      } catch (err) {
+        ai.innerHTML = `<strong>AI:</strong> Error — ${err.message}`;
       }
+      chat.scrollTop = chat.scrollHeight;
     };
   </script>
 </body>
