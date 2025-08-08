@@ -8,55 +8,66 @@
     #chat { max-width: 600px; margin-bottom: 10px; }
     .user { color: blue; }
     .ai { color: green; }
-    textarea { width: 100%; }
+    textarea, input[type=file] { width: 100%; margin-top: 5px; }
+    button { margin-top: 5px; }
   </style>
 </head>
 <body>
   <h2>Chat with Assistant</h2>
   <div id="chat"></div>
-  <textarea id="msg" rows="3" placeholder="Type your message…"></textarea><br>
-  <input type="file" id="fileUpload">
+  
+  <textarea id="msg" rows="3" placeholder="Type your message..."></textarea><br>
+  <input type="file" id="fileInput"><br>
   <button id="send">Send</button>
-  <button id="uploadBtn">Upload File</button>
 
   <script>
-    const API = "https://backend-code-80kr.onrender.com"; // Your backend URL
+    const API = "https://backend-code-80kr.onrender.com/chat";
     let session = localStorage.getItem("session_id") || null;
 
     document.getElementById("send").onclick = async () => {
-      let msg = document.getElementById("msg").value.trim();
-      if (!msg) return;
-      document.getElementById("chat").innerHTML += `<p class="user"><strong>You:</strong> ${msg}</p>`;
-      document.getElementById("msg").value = "";
-      try {
-        let res = await fetch(API + "/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: msg, session_id: session })
-        });
-        let data = await res.json();
-        session = data.session_id;
-        localStorage.setItem("session_id", session);
-        document.getElementById("chat").innerHTML += `<p class="ai"><strong>AI:</strong> ${data.response}</p>`;
-      } catch (e) {
-        alert("Error: " + (e.detail || e.message));
-      }
-    };
+      const msg = document.getElementById("msg").value.trim();
+      const fileInput = document.getElementById("fileInput");
+      const file = fileInput.files[0];
 
-    document.getElementById("uploadBtn").onclick = async () => {
-      const file = document.getElementById("fileUpload").files[0];
-      if (!file) return alert("No file selected!");
-      const formData = new FormData();
-      formData.append("file", file);
+      if (!msg && !file) {
+        alert("Please enter a message or select a file.");
+        return;
+      }
+
+      let chatBox = document.getElementById("chat");
+      chatBox.innerHTML += `<p class="user"><strong>You:</strong> ${msg || "[File Upload]"}</p>`;
+      if (file) {
+        chatBox.innerHTML += `<p class="user"><em>📎 Attached: ${file.name}</em></p>`;
+      }
+      document.getElementById("msg").value = "";
+      fileInput.value = "";
+
       try {
-        let res = await fetch(API + "/upload", {
+        let formData = new FormData();
+        formData.append("message", msg);
+        formData.append("session_id", session || "");
+        if (file) {
+          formData.append("file", file);
+        }
+
+        let res = await fetch(API, {
           method: "POST",
           body: formData
         });
+
+        if (!res.ok) {
+          let error = await res.json();
+          throw new Error(error.detail || "Unknown error");
+        }
+
         let data = await res.json();
-        alert("File uploaded: " + data.filename);
+        session = data.session_id;
+        localStorage.setItem("session_id", session);
+
+        chatBox.innerHTML += `<p class="ai"><strong>AI:</strong> ${data.response}</p>`;
+        chatBox.scrollTop = chatBox.scrollHeight;
       } catch (e) {
-        alert("Upload failed: " + e.message);
+        alert("Error: " + e.message);
       }
     };
   </script>
