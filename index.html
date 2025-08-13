@@ -1,255 +1,205 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import openai, os, uuid, time, asyncio, json, sys, traceback
-from io import BytesIO
-import mimetypes
-import psycopg2
-from psycopg2.extras import RealDictCursor
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Chat with Assistant</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{--bg:#f7f9fc;--panel:#fff;--ink:#0f172a;--muted:#64748b;--ai:#0a7a3f;--you:#1d4ed8;--err:#b91c1c;}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    .wrap{max-width:900px;margin:24px auto;padding:0 16px}
+    h1{margin:0 0 16px;font-size:22px}
+    .panel{background:var(--panel);border-radius:14px;box-shadow:0 6px 18px rgba(2,6,23,.06);padding:16px}
+    #log{max-height:60vh;overflow:auto;padding:6px 4px}
+    .bubble{padding:10px 12px;border-radius:12px;margin:8px 0;background:#eef2ff;color:var(--you)}
+    .bubble.ai{background:#ecfdf3;color:var(--ai);white-space:pre-wrap}
+    .bar{display:grid;gap:10px;margin-top:10px}
+    @media(min-width:760px){.bar{grid-template-columns:1fr 1fr auto}}
+    textarea{flex:1;resize:vertical;min-height:68px;padding:10px;border:1px solid #e2e8f0;border-radius:10px}
+    input[type=file],select{width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff}
+    button{background:#111827;color:#fff;border:none;padding:10px 14px;border-radius:10px;cursor:pointer}
+    button[disabled]{opacity:.6;cursor:not-allowed}
+    .preview{margin-top:6px;font-size:13px;color:var(--muted)}
+    .preview img{max-width:220px;max-height:220px;border-radius:8px;border:1px solid #e5e7eb;display:block;margin-top:6px}
+    .banner{display:none;padding:10px 12px;border-radius:10px;margin:10px 0;background:#fef2f2;color:var(--err);border:1px solid #fecaca}
+    .typing{font-size:13px;color:var(--muted);margin:8px 0 0}
+    .meta{font-size:12px;color:var(--muted);margin-top:6px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Chat with Assistant</h1>
+    <div id="err" class="banner"></div>
 
-# =========================================================
-# OPENAI CREDS (PASTE YOUR REAL KEY)
-# =========================================================
-openai.api_key = "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"
-ASSISTANT_ID   = "asst_SdvuLbm79fKpvJyZZIVYvVyh
+    <div class="panel">
+      <div id="log"></div>
 
+      <div class="bar">
+        <div>
+          <label>Assistant</label>
+          <select id="assistant">
+            <!-- Default assistant (same as backend DEFAULT_ASSISTANT_ID) -->
+            <option value="asst_SdvuLbm79fKpvJyZZIVYvVyh" selected>Default Assistant</option>
+            <!-- Your second assistant -->
+            <option value="asst_pHB7OjRMiEoJJvnKtdyXamp3">Second Assistant</option>
+            <!-- Optional: empty uses backend default -->
+            <option value="">(Use server default)</option>
+          </select>
+          <div id="uid" class="meta"></div>
+        </div>
 
-# Assistants
-DEFAULT_ASSISTANT_ID = "asst_SdvuLbm79fKpvJyZZIVYvVyh"  # default/fallback
-ALLOWED_ASSISTANTS = {
-    "asst_SdvuLbm79fKpvJyZZIVYvVyh": "Default Assistant",
-    "asst_pHB7OjRMiEoJJvnKtdyXamp3": "Second Assistant",
-}
+        <div>
+          <textarea id="msg" placeholder="Type your message…"></textarea>
+          <input id="file" type="file" />
+          <div id="preview" class="preview"></div>
+        </div>
 
-# =========================================================
-# DATABASE (Render Postgres) — set DATABASE_URL env var
-# =========================================================
-DB_URL = os.getenv("DATABASE_URL")  # Render Postgres → External Connection URL
+        <div>
+          <button id="send">Send</button>
+          <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+            <button id="newIdentity" style="background:#334155">New Identity</button>
+            <button id="resetChat" style="background:#374151">Clear Chat</button>
+          </div>
+        </div>
+      </div>
 
-def db():
-    if not DB_URL:
-        raise RuntimeError("DATABASE_URL not set. Add it in Render → Environment.")
-    return psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
+      <div id="typing" class="typing" style="display:none;">AI is typing…</div>
+    </div>
+  </div>
 
-def init_db():
-    try:
-        with db() as conn, conn.cursor() as cur:
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS threads (
-              user_id TEXT NOT NULL,
-              assistant_id TEXT NOT NULL,
-              thread_id TEXT NOT NULL,
-              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-              PRIMARY KEY (user_id, assistant_id)
-            );
-            """)
-            conn.commit()
-            print("[db] threads table ready", flush=True)
-    except Exception as e:
-        print("[db] init error:", e, flush=True)
+  <script>
+    // 👉 Change this if your backend URL differs
+    const API = "https://backend-code-80kr.onrender.com/chat";
 
-if DB_URL:
-    init_db()
-else:
-    print("[WARN] DATABASE_URL not set — persistence disabled until you add it.", flush=True)
+    const logEl = document.getElementById("log");
+    const msgEl = document.getElementById("msg");
+    const fileEl = document.getElementById("file");
+    const previewEl = document.getElementById("preview");
+    const sendBtn = document.getElementById("send");
+    const errEl = document.getElementById("err");
+    const typingEl = document.getElementById("typing");
+    const assistantSel = document.getElementById("assistant");
+    const uidEl = document.getElementById("uid");
+    const newIdentityBtn = document.getElementById("newIdentity");
+    const resetChatBtn = document.getElementById("resetChat");
 
-# =========================================================
-# FASTAPI + CORS
-# =========================================================
-app = FastAPI(title="Assistant Backend (DB-persistent, multi-assistant)")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # when stable, restrict to your Vercel origin
-    allow_methods=["POST", "OPTIONS", "GET"],
-    allow_headers=["*"],
-)
+    // Stable anonymous user_id so backend reuses the same thread (stored in DB)
+    let userId = localStorage.getItem("user_id");
+    if (!userId) {
+      userId = self.crypto?.randomUUID?.() || (Date.now()+"-"+Math.random().toString(16).slice(2));
+      localStorage.setItem("user_id", userId);
+    }
+    uidEl.textContent = "User ID: " + userId;
 
-# =========================================================
-# HELPERS
-# =========================================================
-def log(*a): print(*a, file=sys.stdout, flush=True)
+    function showError(msg){
+      errEl.textContent = msg;
+      errEl.style.display = "block";
+      setTimeout(()=>{ errEl.style.display = "none"; }, 6000);
+    }
+    function addBubble(text, who="you"){
+      const p = document.createElement("div");
+      p.className = "bubble" + (who === "ai" ? " ai" : "");
+      p.innerHTML = `<strong>${who === "ai" ? "AI" : "You"}:</strong> ${escapeHtml(text)}`;
+      logEl.appendChild(p);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    function escapeHtml(s){ return (s||"").toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
-def rate_limit_ok(user_id: str, max_per_hour: int = 40) -> bool:
-    # simple file-backed limiter per user
-    PATH = "rate_store.json"
-    now = time.time()
-    try:
-        data = json.load(open(PATH))
-    except Exception:
-        data = {}
-    calls = data.get(user_id, [])
-    calls = [t for t in calls if now - t < 3600]
-    if len(calls) >= max_per_hour:
-        return False
-    calls.append(now)
-    data[user_id] = calls
-    json.dump(data, open(PATH, "w"))
-    return True
+    async function makePreview(file){
+      previewEl.innerHTML = "";
+      if (!file) return;
+      if (file.type.startsWith("image/")){
+        const url = URL.createObjectURL(file);
+        const img = document.createElement("img");
+        img.src = url; previewEl.appendChild(img);
+      } else if (file.type.startsWith("text/")){
+        const text = await file.text();
+        const snip = document.createElement("div");
+        snip.textContent = text.slice(0, 600) + (text.length > 600 ? "…" : "");
+        previewEl.appendChild(snip);
+      } else {
+        const meta = document.createElement("div");
+        meta.textContent = `Selected: ${file.name} (${file.type || "unknown"})`;
+        previewEl.appendChild(meta);
+      }
+    }
+    fileEl.addEventListener("change", () => makePreview(fileEl.files[0]));
 
-def extract_text_from_message(msg) -> str:
-    parts = []
-    try:
-        for block in getattr(msg, "content", []) or []:
-            if hasattr(block, "text") and getattr(block.text, "value", None):
-                parts.append(block.text.value)
-            elif isinstance(block, dict):
-                val = (block.get("text") or {}).get("value")
-                if isinstance(val, str): parts.append(val)
-    except Exception:
-        pass
-    return "\n".join(parts).strip()
+    // New Identity: generate new user_id → backend creates/uses a fresh thread
+    newIdentityBtn.addEventListener("click", () => {
+      userId = self.crypto?.randomUUID?.() || (Date.now()+"-"+Math.random().toString(16).slice(2));
+      localStorage.setItem("user_id", userId);
+      uidEl.textContent = "User ID: " + userId;
+      addBubble("[Started a new identity (fresh memory).]", "ai");
+    });
 
-async def wait_for_run(thread_id: str, run_id: str, timeout_s: int = 90):
-    start = time.time(); interval = 0.6
-    while True:
-        run = openai.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run_id)
-        status = getattr(run, "status", None) or (isinstance(run, dict) and run.get("status"))
-        if status not in {"queued", "in_progress"}:
-            return run
-        if time.time() - start > timeout_s:
-            try: run.status = "timeout"; return run
-            except Exception: return {"status": "timeout"}
-        await asyncio.sleep(interval); interval = min(interval + 0.2, 2.0)
+    // Clear chat UI only (does not change memory on server)
+    resetChatBtn.addEventListener("click", () => {
+      logEl.innerHTML = "";
+      addBubble("[Cleared chat history on this page. Server memory unchanged.]", "ai");
+    });
 
-def run_error_detail(run) -> str:
-    last_err = getattr(run, "last_error", None)
-    if isinstance(last_err, dict): return last_err.get("message") or last_err.get("code") or ""
-    if last_err and hasattr(last_err, "message"): return getattr(last_err, "message")
-    if isinstance(run, dict):
-        le = run.get("last_error"); 
-        if isinstance(le, dict): return le.get("message") or le.get("code") or ""
-    return ""
+    // Enter to send (Shift+Enter for newline)
+    msgEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
 
-def is_pdf_upload(file_obj: UploadFile) -> bool:
-    mt = file_obj.content_type or mimetypes.guess_type(file_obj.filename)[0] or ""
-    return "pdf" in mt.lower() or (file_obj.filename or "").lower().endswith(".pdf")
+    document.getElementById("send").addEventListener("click", sendMessage);
 
-def pdf_to_text_bytes(raw_bytes: bytes) -> bytes:
-    # Try PyPDF first (fast), then pdfminer.six (broader)
-    try:
-        from pypdf import PdfReader
-        reader = PdfReader(BytesIO(raw_bytes))
-        out = []
-        for i, page in enumerate(reader.pages):
-            txt = (page.extract_text() or "").strip()
-            out.append(f"\n\n=== Page {i+1} ===\n{txt}")
-        combined = "\n".join(out).strip()
-        if combined:
-            return combined.encode("utf-8")
-    except Exception:
-        pass
-    try:
-        from pdfminer.high_level import extract_text as pdfminer_extract_text
-        combined = pdfminer_extract_text(BytesIO(raw_bytes)) or ""
-        if combined.strip():
-            return combined.encode("utf-8")
-    except Exception:
-        pass
-    return raw_bytes  # fallback
+    async function sendMessage(){
+      const text = msgEl.value.trim();
+      const file = fileEl.files[0];
+      const assistantId = assistantSel.value || ""; // empty → server default
 
-def get_or_create_thread(user_id: str, assistant_id: str) -> str:
-    # Reuse per (user_id, assistant_id); create if missing
-    if not DB_URL:
-        t = openai.beta.threads.create()
-        log("[WARN] No DATABASE_URL; returning new thread each call:", t.id)
-        return t.id
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT thread_id FROM threads WHERE user_id=%s AND assistant_id=%s",
-                    (user_id, assistant_id))
-        row = cur.fetchone()
-        if row:
-            return row["thread_id"]
-        t = openai.beta.threads.create()
-        cur.execute("""
-            INSERT INTO threads (user_id, assistant_id, thread_id)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id, assistant_id)
-            DO UPDATE SET thread_id=EXCLUDED.thread_id, updated_at=NOW()
-        """, (user_id, assistant_id, t.id))
-        conn.commit()
-        return t.id
+      if (!text && !file){
+        showError("Please enter a message or choose a file.");
+        return;
+      }
 
-# =========================================================
-# ENDPOINTS
-# =========================================================
-@app.get("/health")
-def health(): return {"status": "ok"}
+      // UI
+      addBubble(text || (file ? `[File] ${file.name}` : ""), "you");
+      sendBtn.disabled = true; typingEl.style.display = "block";
+      previewEl.innerHTML = ""; msgEl.value = ""; fileEl.value = "";
 
-@app.post("/chat")
-async def chat(
-    message: str = Form(""),
-    user_id: str = Form(None),        # stable ID from frontend (uuid)
-    assistant_id: str = Form(None),   # optional; defaults below
-    file: UploadFile = File(None),
-):
-    try:
-        user_id = user_id or str(uuid.uuid4())
+      try {
+        const fd = new FormData();
+        fd.append("message", text);
+        fd.append("user_id", userId);
+        if (assistantId) fd.append("assistant_id", assistantId);
+        if (file) fd.append("file", file);
 
-        # Validate/resolve assistant
-        assistant_id = assistant_id or DEFAULT_ASSISTANT_ID
-        if assistant_id not in ALLOWED_ASSISTANTS:
-            # fallback to default (or raise 400 if you prefer strict)
-            assistant_id = DEFAULT_ASSISTANT_ID
+        const res = await fetch(API, { method: "POST", body: fd });
 
-        if not message and not file:
-            raise HTTPException(status_code=400, detail="Message or file required.")
-        if not rate_limit_ok(user_id):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded.")
+        // Read raw text so we can render server errors verbatim
+        const raw = await res.text();
+        let data = null; try { data = JSON.parse(raw); } catch {}
 
-        thread_id = get_or_create_thread(user_id, assistant_id)
+        if (!res.ok) {
+          const reason = (data && data.detail) || raw || `HTTP ${res.status}`;
+          addBubble(`Error — ${reason}`, "ai");
+          return;
+        }
 
-        # Optional file upload (PDF → text for reliability/cost)
-        attachments = None
-        if file:
-            raw = await file.read()
-            file_bytes = pdf_to_text_bytes(raw) if is_pdf_upload(file) else raw
-            fname = (file.filename or "upload")
-            if is_pdf_upload(file) and file_bytes is not raw:
-                base = fname.rsplit(".", 1)[0]; fname = f"{base}.txt"
-            uploaded = openai.files.create(
-                file=BytesIO(file_bytes),
-                purpose="assistants",
-                filename=fname
-            )
-            attachments = [{"file_id": uploaded.id}]
+        addBubble(data.response || "[No response text returned]", "ai");
+      } catch (e){
+        addBubble(`Network error — ${e.message}`, "ai");
+      } finally {
+        sendBtn.disabled = false; typingEl.style.display = "none";
+      }
+    }
 
-        # Send user message
-        openai.beta.threads.messages.create(
-            thread_id=thread_id,
-            role="user",
-            content=message or (f"Attached file: {getattr(file,'filename','')}" if file else ""),
-            attachments=attachments
-        )
-
-        # Run & wait
-        run = openai.beta.threads.runs.create(thread_id=thread_id, assistant_id=assistant_id)
-        run = await wait_for_run(thread_id, getattr(run, "id", None) or run.get("id"))
-        status = getattr(run, "status", None) or (isinstance(run, dict) and run.get("status"))
-
-        if status == "failed":
-            reason = run_error_detail(run)
-            raise HTTPException(status_code=502, detail=f"Assistant run failed. {('Reason: ' + reason) if reason else 'Check model/tools/billing.'}")
-        if status == "timeout":
-            raise HTTPException(status_code=504, detail="Run timed out. Enable tools or reduce file size.")
-        if status != "completed":
-            raise HTTPException(status_code=502, detail=f"Assistant run ended with status={status}. Check assistant settings & tools.")
-
-        # Fetch reply
-        msgs = openai.beta.threads.messages.list(thread_id=thread_id)
-        assistant_msgs = [m for m in msgs.data if getattr(m, "role", "") == "assistant"]
-        if not assistant_msgs:
-            raise HTTPException(status_code=500, detail="Assistant did not generate a reply. Verify model/instructions/tools/billing.")
-        reply = extract_text_from_message(assistant_msgs[-1]) or "[No text content returned]"
-
-        return JSONResponse({
-            "response": reply,
-            "user_id": user_id,
-            "assistant_id": assistant_id,
-            "thread_id": thread_id
-        })
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Server error: {e}")
+    // Optional: health ping on load
+    (async () => {
+      try {
+        const h = await fetch(API.replace("/chat","/health"));
+        if (!h.ok) showError("Backend health check failed.");
+      } catch { showError("Cannot reach backend."); }
+      console.log("user_id:", userId);
+    })();
+  </script>
+</body>
+</html>
