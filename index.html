@@ -7,25 +7,26 @@
   <style>
     :root { --bg:#f7f9fc; --panel:#fff; --ink:#0f172a; --muted:#64748b; --ai:#0a7a3f; --you:#1d4ed8; --err:#b91c1c; }
     * { box-sizing: border-box; }
-    body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-    .wrap { max-width: 820px; margin: 24px auto; padding: 0 16px; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial; }
+    .wrap { max-width: 860px; margin: 24px auto; padding: 0 16px; }
     h1 { margin: 0 0 16px; font-size: 22px; }
     .panel { background:var(--panel); border-radius:14px; box-shadow:0 6px 18px rgba(2,6,23,.06); padding:16px; }
-    #log { max-height: 60vh; overflow:auto; padding:4px; }
+    #log { max-height: 60vh; overflow:auto; padding:6px 4px; }
     .bubble { padding:10px 12px; border-radius:12px; margin:8px 0; background:#eef2ff; color:var(--you); }
-    .bubble.ai { background:#ecfdf3; color:var(--ai); }
+    .bubble.ai { background:#ecfdf3; color:var(--ai); white-space: pre-wrap; }
     .meta { font-size:12px; color:var(--muted); margin-top:4px; }
-    .row { display:flex; gap:8px; align-items:stretch; }
-    textarea { flex:1; resize:vertical; min-height:64px; padding:10px; border:1px solid #e2e8f0; border-radius:10px; }
+    .row { display:flex; gap:10px; align-items:stretch; }
+    textarea { flex:1; resize:vertical; min-height:68px; padding:10px; border:1px solid #e2e8f0; border-radius:10px; }
     input[type=file] { width:100%; }
     button { background:#111827; color:#fff; border:none; padding:10px 14px; border-radius:10px; cursor:pointer; }
     button[disabled] { opacity:.6; cursor:not-allowed; }
-    .bar { display:grid; gap:8px; margin-top:10px; }
-    @media (min-width:720px){ .bar { grid-template-columns: 1fr 1fr auto; } }
+    .bar { display:grid; gap:10px; margin-top:10px; }
+    @media (min-width:760px){ .bar { grid-template-columns: 1fr 1fr auto; } }
     .preview { margin-top:6px; font-size:13px; color:var(--muted); }
-    .preview img { max-width:200px; max-height:200px; border-radius:8px; border:1px solid #e5e7eb; display:block; margin-top:6px; }
+    .preview img { max-width:220px; max-height:220px; border-radius:8px; border:1px solid #e5e7eb; display:block; margin-top:6px; }
     .banner { display:none; padding:10px 12px; border-radius:10px; margin:10px 0; background:#fef2f2; color:var(--err); border:1px solid #fecaca; }
     .typing { font-size:13px; color:var(--muted); margin:8px 0 0; }
+    .hint { font-size:12px; color:var(--muted); margin-top:6px; }
   </style>
 </head>
 <body>
@@ -42,9 +43,13 @@
         <div>
           <input id="file" type="file" />
           <div id="preview" class="preview"></div>
+          <div class="hint">Tip: memory persists per browser (thread).</div>
         </div>
         <div>
           <button id="send">Send</button>
+          <div style="margin-top:8px;">
+            <button id="newChat" style="background:#334155">New Chat</button>
+          </div>
         </div>
       </div>
 
@@ -53,7 +58,7 @@
   </div>
 
   <script>
-    // CHANGE THIS ONLY IF YOUR BACKEND URL CHANGES
+    // 👉 Change this if your backend URL changes
     const API = "https://backend-code-80kr.onrender.com/chat";
 
     const logEl = document.getElementById("log");
@@ -63,14 +68,17 @@
     const sendBtn = document.getElementById("send");
     const errEl = document.getElementById("err");
     const typingEl = document.getElementById("typing");
+    const newChatBtn = document.getElementById("newChat");
 
-    let session = localStorage.getItem("session_id") || null;
+    // Persist both session_id and thread_id so memory survives backend restarts
+    let session  = localStorage.getItem("session_id") || null;
+    let threadId = localStorage.getItem("thread_id") || null;
 
-    // Helpers
+    // --- helpers ---
     function showError(msg){
       errEl.textContent = msg;
       errEl.style.display = "block";
-      setTimeout(()=>{ errEl.style.display = "none"; }, 4000);
+      setTimeout(()=>{ errEl.style.display = "none"; }, 5000);
     }
     function addBubble(text, who="you"){
       const p = document.createElement("div");
@@ -79,7 +87,7 @@
       logEl.appendChild(p);
       logEl.scrollTop = logEl.scrollHeight;
     }
-    function escapeHtml(s){ return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+    function escapeHtml(s){ return (s||"").toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
     async function makePreview(file){
       previewEl.innerHTML = "";
@@ -87,12 +95,11 @@
       if (file.type.startsWith("image/")){
         const url = URL.createObjectURL(file);
         const img = document.createElement("img");
-        img.src = url;
-        previewEl.appendChild(img);
+        img.src = url; previewEl.appendChild(img);
       } else if (file.type.startsWith("text/")){
         const text = await file.text();
         const snip = document.createElement("div");
-        snip.textContent = text.slice(0, 400) + (text.length > 400 ? "…" : "");
+        snip.textContent = text.slice(0, 600) + (text.length > 600 ? "…" : "");
         previewEl.appendChild(snip);
       } else {
         const meta = document.createElement("div");
@@ -103,7 +110,14 @@
 
     fileEl.addEventListener("change", () => makePreview(fileEl.files[0]));
 
-    // Send handler
+    // Start a brand-new conversation (keeps session, resets thread memory)
+    newChatBtn.addEventListener("click", () => {
+      threadId = null;
+      localStorage.removeItem("thread_id");
+      addBubble("[Started a new chat.]", "ai");
+    });
+
+    // --- send handler ---
     sendBtn.addEventListener("click", async () => {
       const text = msgEl.value.trim();
       const file = fileEl.files[0];
@@ -117,7 +131,6 @@
       addBubble(text || (file ? `[File] ${file.name}` : ""), "you");
       sendBtn.disabled = true;
       typingEl.style.display = "block";
-      const oldPreview = previewEl.innerHTML;
       previewEl.innerHTML = "";
       msgEl.value = "";
       fileEl.value = "";
@@ -125,31 +138,49 @@
       try {
         const fd = new FormData();
         fd.append("message", text);
-        if (session) fd.append("session_id", session);
-        if (file) fd.append("file", file);
+        if (session)  fd.append("session_id", session);
+        if (threadId) fd.append("thread_id", threadId);
+        if (file)     fd.append("file", file);
 
         const res = await fetch(API, { method: "POST", body: fd });
-        const data = await res.json();
 
-        if (!res.ok){
-          addBubble(`Error — ${data.detail || "Request failed"}`, "ai");
+        // Read as text first so we can show server errors verbatim
+        const raw = await res.text();
+        let data = null; try { data = JSON.parse(raw); } catch {}
+
+        if (!res.ok) {
+          const reason = (data && data.detail) || raw || `HTTP ${res.status}`;
+          addBubble(`Error — ${reason}`, "ai");
           return;
         }
 
+        // Persist IDs for memory across tabs/reloads
         if (data.session_id){
           session = data.session_id;
           localStorage.setItem("session_id", session);
         }
-        addBubble(data.response || "[No response text returned]", "ai");
+        if (data.thread_id){
+          threadId = data.thread_id;
+          localStorage.setItem("thread_id", threadId);
+        }
 
+        addBubble(data.response || "[No response text returned]", "ai");
       } catch (e){
-        console.error(e);
-        addBubble(`Error — ${e.message || e}`, "ai");
+        addBubble(`Network error — ${e.message}`, "ai");
       } finally {
         sendBtn.disabled = false;
         typingEl.style.display = "none";
       }
     });
+
+    // Optional: quick backend health ping on load (helpful while debugging)
+    (async () => {
+      try {
+        const h = await fetch(API.replace("/chat","/health"));
+        if (!h.ok) showError("Backend health check failed.");
+      } catch { showError("Cannot reach backend."); }
+      console.log("session:", session, "thread:", threadId);
+    })();
   </script>
 </body>
 </html>
